@@ -1,32 +1,24 @@
-
 import json
-import numpy as np
-import pandas as pd
 import os
-from constants import CONFIG_DIR
-from torch import nn
 
 # Import required libraries for various models
-import xgboost as xgb
-from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.svm import SVR
-from keras.models import load_model
-import torch
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.tree import DecisionTreeRegressor
+from xgboost import XGBRegressor
+
+from constants import CONFIG_DIR
 from models.pytorch_models import pytorchModel
-from xgboost import XGBRegressor, plot_importance
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+
 
 class MLModel:
-    def __init__(self,json_file):
+    def __init__(self, json_file):
         """Initialize the model wrapper."""
         self.model = None
 
-        
-        with open(json_file, 'r') as file:
+        with open(json_file, "r") as file:
             self.config = json.load(file)
-            
+
         self.load_model()
 
     def load_model(self):
@@ -43,19 +35,21 @@ class MLModel:
         model_type = self.config.get("model_type")
 
         if model_type == "xgboost":
-            self.model = xgb.XGBRegressor(**self.config.get("params", {}))
+            self.model = XGBRegressor(**self.config.get("params", {}))
         elif model_type == "sklearn_decision_tree":
             self.model = DecisionTreeRegressor(**self.config.get("params", {}))
         elif model_type == "sklearn_random_forest":
             self.model = RandomForestRegressor(**self.config.get("params", {}))
         elif model_type == "transformer":
-            self.model = pytorchModel(model_type = "transformer",**self.config.get("params", {}))
+            self.model = pytorchModel(
+                model_type="transformer", **self.config.get("params", {})
+            )
         elif model_type == "pytorch_simple_ffn":
-            self.model = pytorchModel(model_type = "dense",**self.config.get("params", {}))
+            self.model = pytorchModel(
+                model_type="dense", **self.config.get("params", {})
+            )
         else:
             raise ValueError(f"Model type '{model_type}' is not recognized.")
-
-    
 
     def fit(self, X, y, **kwargs):
         """
@@ -83,23 +77,27 @@ class MLModel:
             raise ValueError("Model not loaded. Please call load_model() first.")
         return self.model.predict(X)
 
+
 # Example usage
 if __name__ == "__main__":
     # Load model configuration from a JSON file
-    config = 'xgboost_config.json'
-    model = MLModel(os.path.join(CONFIG_DIR,config))
+    config = "xgboost_config.json"
+    model = MLModel(os.path.join(CONFIG_DIR, config))
 
     from dataset_timeseries import GridmaticTimeseries
-    t = GridmaticTimeseries('data.csv', target_col = 'CAISO_system_load', time_index = 'interval_start_time')
+
+    t = GridmaticTimeseries(
+        "data.csv", target_col="CAISO_system_load", time_index="interval_start_time"
+    )
     t.fill_missing_values()
-    t.clean_and_implement_features(lag_range = 96,convert_to_cyclic = False)
+    t.clean_and_implement_features(lag_range=96, convert_to_cyclic=False)
+    t.plot_seasonal_decomposition()
     # t.plot_pca_explained_variance()
 
+    X_train, X_val, X_test, y_train, y_val, y_test = t.return_training_data(
+        n_steps_ahead_to_predict=24, rng=True
+    )
 
-    X_train,X_val,X_test,y_train,y_val,y_test = t.return_training_data(n_steps_ahead_to_predict = 24,rng=True)
-
-
-    
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
 
     # Evaluate the model on the test set
@@ -111,15 +109,10 @@ if __name__ == "__main__":
 
     # xgb_model = xgb.train(param, dtrain, 180, eval_list, early_stopping_rounds=3)
 
-
     import matplotlib.pyplot as plt
+
     plt.figure()
-    plt.plot(y_pred[24*30-10,:])
-    plt.plot(y_val[24*30-10,:])
+    plt.plot(y_pred[24 * 30 - 10, :], label="prediction")
+    plt.plot(y_val[24 * 30 - 10, :], label="actual")
+    plt.legend()
     plt.show()
-
-
-
-
-
-
