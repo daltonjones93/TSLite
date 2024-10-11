@@ -1,0 +1,13 @@
+holidays==0.57
+keras==3.6.0
+matplotlib==3.9.2
+numpy==2.1.2
+pandas==1.5.3
+pytorch_lightning==2.1.4
+scikit_learn==1.5.2
+seaborn==0.13.2
+statsmodels==0.14.2
+torch==2.1.0
+tqdm==4.66.5
+transformers==4.44.1
+xgboost==2.1.1

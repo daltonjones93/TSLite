@@ -1,0 +1,14 @@
+{
+    "model_type": "xgboost",
+    "params": {
+        "n_estimators": 500,
+        "learning_rate": 0.05,
+        "subsample": 0.9,
+        "colsample_bytree": 0.95,
+        "alpha" : 0.5,
+        "gamma" : 0.5,
+        "eval_metric" : "rmse",
+        "min_child_weight": 10,
+        "early_stopping_rounds":20
+    }
+}
