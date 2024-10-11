@@ -303,7 +303,11 @@ if __name__ == "__main__":
     # train_labels = ...
     # val_data = ...
     # val_labels = ...
-    from ..dataset_timeseries import GridmaticTimeseries
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from dataset_timeseries import GridmaticTimeseries
     t = GridmaticTimeseries('data.csv', target_col = 'CAISO_system_load', time_index = 'interval_start_time')
     t.create_weekday_feature()
     t.create_month_feature(convert_to_cyclic = True)
