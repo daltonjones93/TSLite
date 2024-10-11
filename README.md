@@ -2,9 +2,8 @@
 
 ## Description
 
-A brief description of your project goes here. Explain what the project does, its purpose, and any relevant details. For example:
 
-This project is a data analysis tool that allows users to perform exploratory data analysis on CSV files. It provides various visualizations and statistical summaries.
+This project provides a simple unified API for timeseries data analysis, feature engineering, machine learning model training and optimization and model performance evaluation.
 
 ## Table of Contents
 
@@ -96,7 +95,7 @@ To get started using the repo
     ```python
     # Initialize the comparer
     from eval import TimeSeriesModelComparer
-    
+
     comparer = TimeSeriesModelComparer()
 
     # Add models
