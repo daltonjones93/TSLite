@@ -44,6 +44,20 @@ class MLModel:
             self.model = pytorchModel(
                 model_type="transformer", **self.config.get("params", {})
             )
+        elif model_type == "lstm":
+            self.model = pytorchModel(
+                model_type="lstm", **self.config.get("params", {})
+            )
+        elif model_type == "gru":
+            self.model = pytorchModel(model_type="gru", **self.config.get("params", {}))
+        elif model_type == "mamba":
+            self.model = pytorchModel(
+                model_type="mamba", **self.config.get("params", {})
+            )
+        elif model_type == "hyena":
+            self.model = pytorchModel(
+                model_type="hyena", **self.config.get("params", {})
+            )
         elif model_type == "pytorch_simple_ffn":
             self.model = pytorchModel(
                 model_type="dense", **self.config.get("params", {})

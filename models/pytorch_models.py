@@ -16,18 +16,18 @@ class denseFFN(nn.Module):
         self,
         input_size,
         output_size,
-        n_hidden_units,
+        hidden_size,
         n_layers,
         dropout_param=0.05,
         **kwargs,
     ):
         super().__init__()
-        self.l1 = nn.Linear(input_size, n_hidden_units)
-        self.l2 = nn.Linear(n_hidden_units, output_size)
+        self.l1 = nn.Linear(input_size, hidden_size)
+        self.l2 = nn.Linear(hidden_size, output_size)
 
         self.middle_layers = nn.ModuleList()
         for i in range(n_layers):
-            self.middle_layers.append(nn.Linear(n_hidden_units, n_hidden_units))
+            self.middle_layers.append(nn.Linear(hidden_size, hidden_size))
 
         self.activation = nn.SiLU()
         self.dropout = nn.Dropout(dropout_param)
@@ -44,7 +44,7 @@ class denseFFN(nn.Module):
 class SimpleAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, hidden_size, num_heads=8, causal=False):
+    def __init__(self, hidden_size, num_heads=4, causal=False):
         super().__init__()
 
         # Make sure hidden_size is divisible by 2
@@ -132,6 +132,12 @@ class pytorchModel:
             self.model = TransformerModel(**kwargs)
         elif model_type == "lstm":
             self.model = LSTMModel(**kwargs)
+        elif model_type == "mamba":
+            self.model = MambaModel(**kwargs)
+        elif model_type == "gru":
+            self.model = GRUModel(**kwargs)
+        elif model_type == "hyena":
+            self.model = GRUModel(**kwargs)
         else:
             raise ValueError("Model Type not recognized")
 
@@ -232,6 +238,80 @@ class pytorchModel:
             return output
 
 
+class S6Layer(nn.Module):
+    def __init__(self, input_size, output_size, hidden_size):
+        super().__init__()
+        self.input_size = input_size
+        self.output_size = output_size
+        self.hidden_size = hidden_size
+
+        self.lin_in = nn.Linear(input_size, hidden_size)
+        self.lin_out = nn.Linear(hidden_size, output_size)
+
+        self.dt_map = denseFFN(
+            input_size=hidden_size,
+            output_size=1,
+            hidden_size=hidden_size,
+            n_layers=1,
+            dropout_param=0.0,
+        )
+
+        self.A = 10.0 + (1.0 / self.hidden_size) * torch.randn(self.hidden_size).float()
+
+        self.D = nn.Parameter(torch.ones(hidden_size, output_size))
+        self.D._no_weight_decay = True
+
+    def forward(self, x):
+        bsz, q_len, dim = x.shape
+        state = torch.zeros(bsz, dim).float()
+        output = torch.zeros(bsz, q_len, self.output_size)
+        A_exp = torch.diag(torch.exp(-self.A))
+
+        # NOTE this is not as efficient as the implementation in Mamba
+        for i in range(q_len):
+            output[:, i, :] = self.lin_out(state) + torch.mm(state, self.D)
+            A_exp_batched = torch.einsum(
+                "i,jk->ijk",
+                nn.functional.sigmoid(self.dt_map(state)).view(state.shape[0]),
+                A_exp,
+            )
+            state = torch.bmm(state.unsqueeze(1), A_exp_batched).squeeze(
+                1
+            ) + self.lin_in(x[:, i, :])
+        return output
+
+
+class Hyena(nn.Module):
+    def __init__(self, input_size, output_size, hidden_size, max_len=2000):
+        super().__init__()
+        self.input_size = input_size
+        self.output_size = output_size
+        self.hidden_size = hidden_size
+        self.conv = nn.Parameter(torch.randn(max_len, output_size))
+        self.ffn0 = denseFFN(
+            input_size=input_size,
+            output_size=hidden_size,
+            hidden_size=hidden_size,
+            n_layers=1,
+        )
+
+        self.ffn1 = denseFFN(
+            input_size=hidden_size,
+            output_size=output_size,
+            hidden_size=hidden_size,
+            n_layers=1,
+        )
+
+    def forward(self, x):
+
+        x = self.ffn0(x)
+        x = torch.abs(torch.fft.fft(x, dim=1)).float()
+        x = self.conv[: x.shape[1], :].unsqueeze(0) * x
+        x = torch.abs(torch.fft.ifft(x, dim=1)).float()
+        x = self.ffn1(x)
+        return x
+
+
 class TransformerModel(nn.Module):
     def __init__(
         self,
@@ -252,6 +332,53 @@ class TransformerModel(nn.Module):
         self.norms_ffn = nn.ModuleList()
         for i in range(n_layers):
             self.attention_layers.append(SimpleAttention(hidden_size))
+            self.ffn_layers.append(
+                denseFFN(hidden_size, hidden_size, hidden_size * 2, 1)
+            )
+            self.norms_attn.append(nn.LayerNorm(hidden_size))
+            self.norms_ffn.append(nn.LayerNorm(hidden_size))
+        self.dropout = nn.Dropout(dropout_param)
+        self.last_linear = nn.Linear(hidden_size, output_size)
+        self.max_len = max_len
+
+    def forward(self, x):
+        if x.shape[1] > self.max_len:
+            raise ValueError(
+                "x is too long for the model, try to shorten the sequence of inputs"
+            )
+        x = self.ffn0(x)
+        for i in range(len(self.attention_layers)):
+            attn = self.attention_layers[i]
+            ffn = self.ffn_layers[i]
+            norm_attn = self.norms_attn[i]
+            norm_ffn = self.norms_ffn[i]
+            x = norm_attn(x + self.dropout(attn(x)))
+            x = norm_ffn(x + self.dropout(ffn(x)))
+        x = x[:, -1, :]
+        x = self.last_linear(x)
+        return x
+
+
+class MambaModel(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        hidden_size,
+        n_layers,
+        dropout_param=0.05,
+        max_len=2000,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.ffn0 = denseFFN(input_size, hidden_size, hidden_size, 1)
+        self.attention_layers = nn.ModuleList()
+        self.ffn_layers = nn.ModuleList()
+        self.norms_attn = nn.ModuleList()
+        self.norms_ffn = nn.ModuleList()
+        for i in range(n_layers):
+            self.attention_layers.append(S6Layer(hidden_size, hidden_size, hidden_size))
             self.ffn_layers.append(
                 denseFFN(hidden_size, hidden_size, hidden_size * 2, 1)
             )
@@ -320,6 +447,98 @@ class LSTMModel(nn.Module):
             norm_ffn = self.norms_ffn[i]
             tmp, _ = lstm(x)
             x = norm_lstm(x + self.dropout(tmp))
+            x = norm_ffn(x + self.dropout(ffn(x)))
+        x = x[:, -1, :]
+        x = self.last_linear(x)
+        return x
+
+
+class GRUModel(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        hidden_size,
+        n_layers,
+        dropout_param=0.05,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.ffn0 = denseFFN(input_size, hidden_size, hidden_size, 1)
+        self.gru_layers = nn.ModuleList()
+        self.ffn_layers = nn.ModuleList()
+        self.norms_gru = nn.ModuleList()
+        self.norms_ffn = nn.ModuleList()
+        for i in range(n_layers):
+            self.gru_layers.append(
+                nn.GRU(
+                    input_size=hidden_size, hidden_size=hidden_size, batch_first=True
+                )
+            )
+            self.ffn_layers.append(
+                denseFFN(hidden_size, hidden_size, hidden_size * 2, 1)
+            )
+            self.norms_gru.append(nn.LayerNorm(hidden_size))
+            self.norms_ffn.append(nn.LayerNorm(hidden_size))
+        self.dropout = nn.Dropout(dropout_param)
+        self.last_linear = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+
+        x = self.ffn0(x)
+        for i in range(len(self.gru_layers)):
+            gru = self.gru_layers[i]
+            ffn = self.ffn_layers[i]
+            norm_gru = self.norms_gru[i]
+            norm_ffn = self.norms_ffn[i]
+            tmp, _ = gru(x)
+            x = norm_gru(x + self.dropout(tmp))
+            x = norm_ffn(x + self.dropout(ffn(x)))
+        x = x[:, -1, :]
+        x = self.last_linear(x)
+        return x
+
+
+class HyenaModel(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        hidden_size,
+        n_layers,
+        dropout_param=0.05,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.ffn0 = denseFFN(input_size, hidden_size, hidden_size, 1)
+        self.hyena_layers = nn.ModuleList()
+        self.ffn_layers = nn.ModuleList()
+        self.norms_hyena = nn.ModuleList()
+        self.norms_ffn = nn.ModuleList()
+        for i in range(n_layers):
+            self.hyena_layers.append(
+                Hyena(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
+            )
+            self.ffn_layers.append(
+                denseFFN(hidden_size, hidden_size, hidden_size * 2, 1)
+            )
+            self.norms_hyena.append(nn.LayerNorm(hidden_size))
+            self.norms_ffn.append(nn.LayerNorm(hidden_size))
+        self.dropout = nn.Dropout(dropout_param)
+        self.last_linear = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+
+        x = self.ffn0(x)
+        for i in range(len(self.hyena_layers)):
+            hyena = self.hyena_layers[i]
+            ffn = self.ffn_layers[i]
+            norm_hyena = self.norms_hyena[i]
+            norm_ffn = self.norms_ffn[i]
+            tmp, _ = hyena(x)
+            x = norm_hyena(x + self.dropout(tmp))
             x = norm_ffn(x + self.dropout(ffn(x)))
         x = x[:, -1, :]
         x = self.last_linear(x)

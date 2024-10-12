@@ -3,6 +3,7 @@ import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 from sklearn.metrics import (mean_absolute_error, mean_squared_error,
                              median_absolute_error, r2_score)
 
@@ -21,9 +22,15 @@ class TimeSeriesModelComparer:
     def predict(self, X_test):
         """Make predictions with all models."""
         for name, model in self.models.items():
-            predictions = model.predict(X_test)
-            self.results[name] = predictions
-            print(f"{name} model made predictions.")
+            if isinstance(model, xgb.XGBRegressor) and X_test.ndim == 3:
+                X_test_xgboost = X_test.copy().reshape(X_test.shape[0], -1)
+                predictions = model.predict(X_test_xgboost)
+                self.results[name] = predictions
+                print(f"{name} model made predictions.")
+            else:
+                predictions = model.predict(X_test)
+                self.results[name] = predictions
+                print(f"{name} model made predictions.")
 
     def evaluate(self, y_test):
         """Evaluate all models using various metrics."""
@@ -75,6 +82,8 @@ class TimeSeriesModelComparer:
 # Example Usage
 if __name__ == "__main__":
 
+    from sklearn.decomposition import PCA
+
     from dataset_timeseries import TimeseriesData
     from models.pytorch_models import pytorchModel
 
@@ -82,14 +91,39 @@ if __name__ == "__main__":
         "data.csv", target_col="CAISO_system_load", time_index="interval_start_time"
     )
     t.create_weekday_feature()
+    avg = np.zeros(t.features.shape[0])
+    for col in t.features:
+        if "forecast" in col:
+            if "dewpoint" in col:
+                t.features = t.features.drop(columns=[col])
+            else:
+                avg += t.features[col].values
+                t.features = t.features.drop(columns=[col])
+    t.features["avg"] = avg
+
     t.create_month_feature(convert_to_cyclic=True)
     t.create_hour_feature(convert_to_cyclic=True)
     t.create_seasonal_feature()
-    t.create_fft_feature(128)
+    t.create_fft_feature(256)
     t.fill_missing_values()
     t.scale_features()
+
+    pca = PCA(n_components=0.75)  # Retain 75% of the variance
+
+    data = t.features.drop(columns=[t.time_index, t.target_col]).values
+    data = pca.fit_transform(data)
+    print(data.shape)
+
+    # turn this into a function in dataset_timeseries
+    times = t.features[t.time_index]
+    target = t.features[t.target_col]
+    col_names = ["pca_" + str(i) for i in range(data.shape[1])]
+    t.features = pd.DataFrame(data, columns=col_names)
+    t.features[t.time_index] = times
+    t.features[t.target_col] = target
+
     n_steps_predict = 24
-    past_states = 96
+    past_states = 128
     xTrain, xVal, xTest, yTrain, yVal, yTest = t.return_training_data_recurrent(
         past_states, n_steps_predict
     )
@@ -102,19 +136,47 @@ if __name__ == "__main__":
     kwargs = {
         "input_size": input_size,
         "output_size": n_steps_predict,
-        "hidden_size": 64,
+        "hidden_size": 128,
         "n_layers": 2,
-        "batch_size": 64,
-        "lr": 0.001,
+        "batch_size": 16,
+        "lr": 0.00025,
         "epochs": 2,
     }
 
+    xgb_model = xgb.XGBRegressor(
+        n_estimators=100,
+        learning_rate=0.1,  # max_depth= 180,
+        subsample=0.9,
+        colsample_bytree=0.95,
+        alpha=0.5,
+        gamma=0.5,
+        eval_metric="rmse",
+        min_child_weight=10,
+        early_stopping_rounds=20,
+    )
+    mamba_model = pytorchModel(model_type="mamba", **kwargs)
+    hyena_model = pytorchModel(model_type="hyena", **kwargs)
+    gru_model = pytorchModel(model_type="gru", **kwargs)
     transformer_model = pytorchModel(model_type="transformer", **kwargs)
     lstm_model = pytorchModel(model_type="lstm", **kwargs)
 
+    hyena_model.fit(xTrain, yTrain)
+
+    xgb_model.fit(
+        xTrain.copy().reshape(xTrain.shape[0], -1),
+        yTrain,
+        eval_set=[(xVal.copy().reshape(xVal.shape[0], -1), yVal)],
+    )
+    gru_model.fit(xTrain, yTrain)
+    mamba_model.fit(xTrain, yTrain)
     transformer_model.fit(xTrain, yTrain)
     lstm_model.fit(xTrain, yTrain)
 
+    # add models for comparison
+    comparer.add_model("gru", gru_model)
+    comparer.add_model("hyena", hyena_model)
+    comparer.add_model("xgboost", xgb_model)
+    comparer.add_model("Mamba", mamba_model)
     comparer.add_model("Transformer", transformer_model)
     comparer.add_model("LSTM", lstm_model)
 

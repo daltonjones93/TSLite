@@ -1,0 +1,13 @@
+{
+    "model_type": "mamba",
+    "params": {
+        "input_size":4,
+        "output_size":3,
+        "hidden_size":20,
+        "n_layers":1,
+        "dropout_param":0.05,
+        "batch_size":10,
+        "lr":0.01,
+        "epochs":100
+    }
+}
