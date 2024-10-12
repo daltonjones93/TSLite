@@ -82,8 +82,6 @@ class TimeSeriesModelComparer:
 # Example Usage
 if __name__ == "__main__":
 
-    from sklearn.decomposition import PCA
-
     from dataset_timeseries import TimeseriesData
     from models.pytorch_models import pytorchModel
 
@@ -91,36 +89,13 @@ if __name__ == "__main__":
         "data.csv", target_col="CAISO_system_load", time_index="interval_start_time"
     )
     t.create_weekday_feature()
-    avg = np.zeros(t.features.shape[0])
-    for col in t.features:
-        if "forecast" in col:
-            if "dewpoint" in col:
-                t.features = t.features.drop(columns=[col])
-            else:
-                avg += t.features[col].values
-                t.features = t.features.drop(columns=[col])
-    t.features["avg"] = avg
-
     t.create_month_feature(convert_to_cyclic=True)
     t.create_hour_feature(convert_to_cyclic=True)
     t.create_seasonal_feature()
     t.create_fft_feature(256)
     t.fill_missing_values()
     t.scale_features()
-
-    pca = PCA(n_components=0.75)  # Retain 75% of the variance
-
-    data = t.features.drop(columns=[t.time_index, t.target_col]).values
-    data = pca.fit_transform(data)
-    print(data.shape)
-
-    # turn this into a function in dataset_timeseries
-    times = t.features[t.time_index]
-    target = t.features[t.target_col]
-    col_names = ["pca_" + str(i) for i in range(data.shape[1])]
-    t.features = pd.DataFrame(data, columns=col_names)
-    t.features[t.time_index] = times
-    t.features[t.target_col] = target
+    t.apply_pca()
 
     n_steps_predict = 24
     past_states = 128

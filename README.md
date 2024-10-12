@@ -21,6 +21,7 @@ Follow these steps to set up the project on your local machine:
 2. **Install dependencies**:
    From within the project directory run
    ```bash
+   cd TSLite
    pip install -r requirements.txt
 
 

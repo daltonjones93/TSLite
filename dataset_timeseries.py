@@ -343,6 +343,20 @@ class TimeseriesData(object):
         )
         self.features.drop(columns=[feature], inplace=True)
 
+    def apply_pca(self, variance=0.8):
+        pca = PCA(n_components=variance)  # Retain 75% of the variance
+
+        data = self.features.drop(columns=[self.time_index, self.target_col]).values
+        data = pca.fit_transform(data)
+
+        # turn this into a function in dataset_timeseries
+        times = self.features[self.time_index]
+        target = self.features[self.target_col]
+        col_names = ["pca_" + str(i) for i in range(data.shape[1])]
+        self.features = pd.DataFrame(data, columns=col_names)
+        self.features[self.time_index] = times
+        self.features[self.target_col] = target
+
     def visualize_adfuller_results(self, feature, title):
 
         series = self.data[feature].interpolate().values
