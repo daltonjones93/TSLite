@@ -2,7 +2,7 @@
 
 ## Description
 
-This project provides a simple unified API for timeseries data analysis, feature engineering, machine learning model training and optimization and model performance evaluation.
+This project provides a simple unified API for timeseries data analysis, feature engineering, machine learning model training, optimization and model performance evaluation.
 
 ## Table of Contents
 
